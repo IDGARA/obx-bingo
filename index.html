@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Family Road Trip BINGO</title>
+    <!-- Tailwind CSS for sleek UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase Realtime Database Scripts -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <!-- Lightweight High-Performance Confetti Engine -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <style>
+        .bingo-tile { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+        .ios-pop { transition: transform 0.1s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        .ios-pop:active { transform: scale(0.92); }
+    </style>
+</head>
+<body class="bg-blue-50 text-slate-900 dark:bg-slate-900 dark:text-slate-100 font-sans transition-colors duration-300 select-none">
+
+    <!-- SETUP SCREEN -->
+    <div id="setup-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-blue-600 dark:bg-slate-950 p-6">
+        <div class="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-2xl w-full max-w-md space-y-4">
+            <h1 class="text-3xl font-black text-center text-blue-600 dark:text-blue-400 tracking-wider">ROAD TRIP BINGO</h1>
+            <div class="space-y-2">
+                <label class="block font-bold text-sm text-slate-500 dark:text-slate-400">ROOM CODE</label>
+                <input type="text" id="room-input" class="w-full p-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 dark:bg-slate-900 font-mono text-center text-xl uppercase tracking-widest uppercase" placeholder="OBX2026">
+            </div>
+            <div class="space-y-2">
+                <label class="block font-bold text-sm text-slate-500 dark:text-slate-400">YOUR NAME</label>
+                <input type="text" id="name-input" class="w-full p-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 dark:bg-slate-900 font-bold text-center text-xl" placeholder="Driver, Alex, Julie...">
+            </div>
+            <button onclick="joinGame()" class="w-full bg-orange-500 hover:bg-orange-600 text-white font-black py-4 rounded-xl text-lg shadow-md ios-pop">JOIN VEHICLE LOBBY</button>
+        </div>
+    </div>
+
+    <!-- MAIN GAME INTERFACE -->
+    <div class="max-w-md mx-auto h-screen flex flex-col justify-between p-3 box-border">
+        
+        <!-- HEADER SECTION -->
+        <header class="flex items-center justify-between bg-white dark:bg-slate-800 p-3 rounded-2xl shadow-sm">
+            <div>
+                <span id="player-tag" class="text-xs font-bold px-2 py-1 bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 rounded-md">Connecting...</span>
+                <div class="flex items-center space-x-2 mt-1">
+                    <select id="region-selector" onchange="changeRegion(this.value)" class="bg-transparent font-black text-lg focus:outline-none cursor-pointer">
+                        <option value="obx">🌊 Outer Banks (Verbatim)</option>
+                        <option value="chesapeake">🦀 Chesapeake / Delmarva</option>
+                        <option value="nyc_nh">🗽 NYC to Manchester</option>
+                    </select>
+                </div>
+            </div>
+            <button onclick="triggerResetFlow()" class="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 ios-pop text-sm font-bold text-red-500">🔄 New Round</button>
+        </header>
+
+        <!-- LIVE TRASH TALK TICKER -->
+        <div class="bg-slate-900 text-orange-400 px-3 py-2 rounded-xl text-xs font-mono overflow-hidden whitespace-nowrap relative h-8 my-2 shadow-inner">
+            <div id="ticker-content" class="absolute inline-block animate-[marquee_25s_linear_infinite] hover:pause pl-[100%]">
+                Waiting for trip updates... Safe travels! 🚗💨
+            </div>
+        </div>
+
+        <!-- 5x5 BINGO GRID -->
+        <div class="grid grid-cols-5 gap-1.5 aspect-square w-full bg-slate-200 dark:bg-slate-800 p-1.5 rounded-2xl shadow-md" id="bingo-grid">
+            <!-- Grid generated programmatically via JS -->
+        </div>
+
+        <!-- SCOREBOARD / FOOTER -->
+        <footer class="bg-white dark:bg-slate-800 p-3 rounded-2xl shadow-sm mt-2">
+            <h3 class="text-xs font-black tracking-wider text-slate-400 mb-2 uppercase">Vehicle Standings</h3>
+            <div id="scoreboard" class="grid grid-cols-4 gap-2 text-center text-xs">
+                <!-- Scores dynamic -->
+            </div>
+        </footer>
+    </div>
+
+    <!-- TWO-STEP CONFIRMATION MODAL -->
+    <div id="confirm-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/60 p-6 backdrop-blur-xs">
+        <div class="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-sm w-full text-center space-y-4">
+            <h3 class="text-xl font-black text-red-500">Reset Current Round?</h3>
+            <p class="text-sm text-slate-500 dark:text-slate-400">This will completely clear and wipe the board layouts for everyone logged into this room code.</p>
+            <div class="flex space-x-3">
+                <button onclick="closeResetFlow()" class="w-1/2 py-3 bg-slate-200 dark:bg-slate-700 font-bold rounded-xl ios-pop">Cancel</button>
+                <button onclick="executeGlobalReset()" class="w-1/2 py-3 bg-red-500 text-white font-black rounded-xl ios-pop">Yes, Reset All</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- CONFIGURATION & APP LOGIC -->
+    <script>
+        // --- DATA DICTIONARIES (REGIONAL POOLS) ---
+        const MASTER_POOLS = {
+            obx: ["FLAG", "POOL", "SURFBOARD", "FISHING PIER", "POLICE CAR", "ADIRONDACK CHAIR", "WINGED HORSE", "GOLF CART", "WATER TOWER", "STOP SIGN", "FLIP FLOPS", "BIKE", "OBX LICENSE PLATE", "RESTAURANT", "BIPLANE", "MILEPOST", "OCEAN", "FIRE TRUCK", "BRIDGE", "BOAT", "UMBRELLA", "WRIGHT MEMORIAL", "KITE", "SEASHELL", "LIGHTHOUSE", "JOCKEY'S RIDGE", "WILD HORSE SIGN", "ICE CREAM SHOP", "SEAGULL", "JEEP", "SOUVENIR SHOP", "DUNE BUGGY", "PIER BILLBOARD", "SHELL GAS STATION"],
+            chesapeake: ["TUNNEL ENTRANCE", "CRAB SHACK", "NAVY SHIP", "PELICAN", "LIGHTHOUSE", "SEAGULL", "TRACTOR", "WAWA LOGO", "WELCOME TO MD SIGN", "WATERMELON STAND", "BOAT ON TRAILER", "FISHING NETS", "CHINCOTEAGUE PONY", "POCOMINTO SIGN", "CHICKEN FARM", "DELAWARE PLATE", "BAY BRIDGE TOLL", "SAILBOAT", "MARINA", "DEER CROSSING", "CONSTRUCTION ZONE", "HISTORIC MARKER", "PALM TREE EMBLEM", "CRAB POT STACK"],
+            nyc_nh: ["GW BRIDGE TOWERS", "CUOMO BLUE CABLES", "MASS PIKE HAT SIGN", "HARTFORD SKYLINE", "DANBURY EXIT", "DUNKIN DRIVE THRU", "WELCOME TO NH SIGN", "YELLOW TAXI", "EZPASS SIGN", "WHITE MOUNTAINS AD", "DELIVERY TRUCK", "STATE TROOPER", "STATE LINE SIGN", "TUNNEL DIGGER", "MOTORCYCLE GANG", "ROADSIDE DINER", "AMBULANCE", "CAR CARRIER", "FARM STAND", "VERMONT PLATE", "COVERED BRIDGE AD", "MAPLE SYRUP SIGN", "PINE TREE LINE"]
+        };
+
+        // --- UNIQUE HIGH-VALUE TARGETS ---
+        const UNIQUE_TARGETS = ["WRIGHT MEMORIAL", "WINGED HORSE", "CUOMO BLUE CABLES", "MASS PIKE HAT SIGN", "CHINCOTEAGUE PONY", "NAVY SHIP", "BIPLANE", "MILEPOST"];
+
+        // --- GLOBAL VARIABLES ---
+        let db, roomRef, playerRef;
+        let currentRoom = "OBX2026";
+        let currentPlayer = "";
+        let currentRegion = "obx";
+        let localBoard = [];
+        let markedSquares = [];
+        let lastTapTime = 0;
+
+        // --- FIREBASE INITIALIZATION ---
+        // REPLACE THIS URL WITH YOUR ACTUAL CONFIGURATION FROM STEP 1
+        const firebaseConfig = { databaseURL: "https://obx-bingo-default-rtdb.firebaseio.com/" };
+        firebase.initializeApp(firebaseConfig);
+        db = firebase.database();
+
+        // CHECK URL FOR ROOM ENFORCEMENT
+        const urlParams = new URLSearchParams(window.location.search);
+        if(urlParams.get('room')) {
+            document.getElementById('room-input').value = urlParams.get('room').toUpperCase();
+        }
+
+        // --- AUTO DARK MODE ---
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            document.documentElement.classList.add('dark');
+        }
+
+        function joinGame() {
+            const roomVal = document.getElementById('room-input').value.trim().toUpperCase();
+            const nameVal = document.getElementById('name-input').value.trim();
+            
+            if(!roomVal || !nameVal) return alert("Please specify both a Room Code and Name!");
+            
+            currentRoom = roomVal;
+            currentPlayer = nameVal;
+            
+            roomRef = db.ref('rooms/' + currentRoom);
+            playerRef = roomRef.child('players/' + currentPlayer);
+
+            document.getElementById('player-tag').innerText = `${currentPlayer} @ ${currentRoom}`;
+            document.getElementById('setup-screen').classList.add('hidden');
+
+            // Save session state to device storage
+            localStorage.setItem('obx_room', currentRoom);
+            localStorage.setItem('obx_name', currentPlayer);
+
+            initializeNetworkListeners();
+        }
+
+        function initializeNetworkListeners() {
+            // Listen for structural configuration drops (Regions / Global Wipes)
+            roomRef.child('meta').on('value', snapshot => {
+                const data = snapshot.val();
+                if(data) {
+                    if(data.currentRegion !== currentRegion) {
+                        currentRegion = data.currentRegion;
+                        document.getElementById('region-selector').value = currentRegion;
+                    }
+                    if(data.resetTimestamp !== localStorage.getItem('lastReset')) {
+                        localStorage.setItem('lastReset', data.resetTimestamp);
+                        generateFreshLocalBoard();
+                    }
+                } else {
+                    // Seed initial cloud state if room is freshly initialized
+                    roomRef.child('meta').set({ currentRegion: 'obx', resetTimestamp: Date.now() });
+                }
+            });
+
+            // Listen for Global System Ticker and claimed structures
+            roomRef.child('ticker').on('value', snapshot => {
+                const logs = snapshot.val() || [];
+                const tickerEl = document.getElementById('ticker-content');
+                if(logs.length > 0) {
+                    tickerEl.innerHTML = logs.slice(-3).reverse().join(' &nbsp;|&nbsp; ');
+                }
+            });
+
+            // Sync score tracking boards
+            roomRef.child('players').on('value', snapshot => {
+                const players = snapshot.val() || {};
+                const scoreboard = document.getElementById('scoreboard');
+                scoreboard.innerHTML = '';
+                
+                Object.keys(players).forEach(p => {
+                    const hasBingo = players[p].bingo ? '🏆 BINGO' : `${players[p].score || 0} pts`;
+                    scoreboard.innerHTML += `
+                        <div class="p-2 rounded-xl bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-600">
+                            <div class="font-black truncate text-slate-700 dark:text-slate-300">${p}</div>
+                            <div class="font-mono mt-0.5 text-orange-500 font-bold">${hasBingo}</div>
+                        </div>`;
+                });
+            });
+        }
+
+        function generateFreshLocalBoard() {
+            let pool = [...MASTER_POOLS[currentRegion]];
+            // Fisher-Yates Shuffle Algorithm
+            for (let i = pool.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [pool[i], pool[j]] = [pool[j], pool[i]];
+            }
+
+            localBoard = pool.slice(0, 24);
+            localBoard.splice(12, 0, "FREE"); // Middle core placement
+            markedSquares = Array(25).fill(false);
+            markedSquares[12] = true; // Auto check FREE space
+
+            playerRef.set({ score: 0, bingo: false });
+            renderGrid();
+        }
+
+        function renderGrid() {
+            const gridEl = document.getElementById('bingo-grid');
+            gridEl.innerHTML = '';
+
+            roomRef.child('unique_claims').get().then(snapshot => {
+                const claims = snapshot.val() || {};
+
+                localBoard.forEach((item, index) => {
+                    const isMarked = markedSquares[index];
+                    const isUnique = UNIQUE_TARGETS.includes(item);
+                    const claimedBySomeoneElse = isUnique && claims[item] && claims[item] !== currentPlayer;
+
+                    let bgClass = "bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200";
+                    if (isMarked) bgClass = "bg-orange-500 text-white font-black shadow-inner";
+                    if (item === "FREE") bgClass = "bg-blue-600 text-white font-black";
+                    if (claimedBySomeoneElse) bgClass = "bg-slate-300 dark:bg-slate-700 text-slate-400 dark:text-slate-500 line-through opacity-40 pointer-events-none";
+
+                    gridEl.innerHTML += `
+                        <button 
+                            id="tile-${index}"
+                            onclick="handleTileTap(${index}, '${item}')"
+                            class="bingo-tile ios-pop ${bgClass} rounded-xl p-1 flex flex-col items-center justify-center text-center shadow-xs border border-black/5 dark:border-white/5 overflow-hidden break-words">
+                            <span class="text-[9px] sm:text-xs leading-none font-bold tracking-tight uppercase">${item}</span>
+                            ${isUnique && !isMarked && !claimedBySomeoneElse ? '<span class="text-[7px] text-orange-500 mt-0.5 font-black">⭐ UNIQUE</span>' : ''}
+                            ${isUnique && isMarked ? '<span class="text-[7px] text-orange-200 mt-0.5 font-black">CLAIMED</span>' : ''}
+                        </button>`;
+                });
+            });
+        }
+
+        function handleTileTap(index, item) {
+            if(item === "FREE") return;
+
+            const currentTime = new Date().getTime();
+            const tapLength = currentTime - lastTapTime;
+            lastTapTime = currentTime;
+
+            // BUMPY ROAD PROTECTOR: Enforce double-tap resolution mechanic (300ms window)
+            if (tapLength > 300) return; 
+
+            // Trigger Android hardware vibration interface if accessible
+            if (navigator.vibrate) navigator.vibrate(40);
+
+            if (UNIQUE_TARGETS.includes(item) && !markedSquares[index]) {
+                // Unique check optimization loop
+                roomRef.child('unique_claims/' + item).transaction(currentOwner => {
+                    if (currentOwner === null) {
+                        executeMark(index, item);
+                        pushTickerMessage(`⭐ ${currentPlayer} uniquely claimed [${item}]!`);
+                        return currentPlayer;
+                    } else {
+                        alert(`Too slow! ${currentOwner} already claimed ${item}!`);
+                        renderGrid();
+                        return;
+                    }
+                });
+            } else {
+                executeMark(index, item);
+            }
+        }
+
+        function executeMark(index, item) {
+            markedSquares[index] = !markedSquares[index];
+            
+            // Calculate real-time scoring data matrix
+            const totalScore = markedSquares.filter(Boolean).length - 1; 
+            const isBingo = checkBingoMatrix();
+
+            playerRef.update({ score: totalScore, bingo: isBingo });
+
+            if(markedSquares[index]) {
+                pushTickerMessage(`${currentPlayer} marked [${item}]`);
+            }
+
+            if (isBingo) {
+                confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } });
+                pushTickerMessage(`🎉 ${currentPlayer} HIT BINGO! 🎉`);
+            }
+
+            renderGrid();
+        }
+
+        function checkBingoMatrix() {
+            const b = markedSquares;
+            // Complete winning 5x5 structural coordinate index tracking lines
+            const lines = [
+                [0,1,2,3,4], [5,6,7,8,9], [10,11,12,13,14], [15,16,17,18,19], [20,21,22,23,24], // Horizontals
+                [0,5,10,15,20], [1,6,11,16,21], [2,7,12,17,22], [3,8,13,18,23], [4,9,14,19,24], // Verticals
+                [0,6,12,18,24], [4,8,12,16,20] // Diagonals
+            ];
+            return lines.some(line => line.every(idx => b[idx] === true));
+        }
+
+        function pushTickerMessage(msg) {
+            roomRef.child('ticker').get().then(snapshot => {
+                let currentLogs = snapshot.val() || [];
+                currentLogs.push(`[${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}] ${msg}`);
+                if(currentLogs.length > 15) currentLogs.shift(); // Constrain database volume
+                roomRef.child('ticker').set(currentLogs);
+            });
+        }
+
+        // --- ROOM MANAGEMENT INTERFACE CORES ---
+        function changeRegion(val) {
+            currentRegion = val;
+            roomRef.child('meta').update({ currentRegion: val });
+            pushTickerMessage(`🗺️ Route switched to: ${val.toUpperCase()}`);
+            executeGlobalReset();
+        }
+
+        function triggerResetFlow() {
+            document.getElementById('confirm-modal').classList.remove('hidden');
+        }
+        function closeResetFlow() {
+            document.getElementById('confirm-modal').classList.add('hidden');
+        }
+        function executeGlobalReset() {
+            document.getElementById('confirm-modal').classList.add('hidden');
+            roomRef.child('unique_claims').set(null);
+            roomRef.child('meta').update({ resetTimestamp: Date.now() });
+            pushTickerMessage(`🔄 A fresh round has been initialized!`);
+        }
+
+        // AUTO LOG-IN RECOVERY CHECK
+        window.onload = function() {
+            const cachedRoom = localStorage.getItem('obx_room');
+            const cachedName = localStorage.getItem('obx_name');
+            if(cachedRoom && cachedName) {
+                document.getElementById('room-input').value = cachedRoom;
+                document.getElementById('name-input').value = cachedName;
+                joinGame();
+            }
+        }
+    </script>
+
+    <style>
+        @keyframes marquee {
+            0% { transform: translate3d(0, 0, 0); }
+            100% { transform: translate3d(-100%, 0, 0); }
+        }
+    </style>
+</body>
+</html>
