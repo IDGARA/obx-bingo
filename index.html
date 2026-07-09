@@ -16,7 +16,7 @@
 </head>
 <body class="bg-blue-50 text-slate-900 dark:bg-slate-900 dark:text-slate-100 font-sans transition-colors duration-300 select-none">
 
-    <div id="setup-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-blue-600 dark:bg-slate-950 p-6">
+    <div id="setup-screen" class="fixed inset-0 z-40 flex items-center justify-center bg-blue-600 dark:bg-slate-950 p-6">
         <div class="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-2xl w-full max-w-md space-y-4">
             <h1 class="text-3xl font-black text-center text-blue-600 dark:text-blue-400 tracking-wider">ROAD TRIP BINGO</h1>
             <div class="space-y-2">
@@ -31,11 +31,14 @@
         </div>
     </div>
 
-    <div class="max-w-md mx-auto h-screen flex flex-col justify-between p-3 box-border">
+    <div class="max-w-md mx-auto h-screen flex flex-col justify-between p-3 box-border relative z-10">
         
         <header class="flex items-center justify-between bg-white dark:bg-slate-800 p-3 rounded-2xl shadow-sm">
             <div>
-                <span id="player-tag" class="text-xs font-bold px-2 py-1 bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 rounded-md">Connecting...</span>
+                <div class="flex items-center space-x-2">
+                    <span id="player-tag" class="text-xs font-bold px-2 py-1 bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 rounded-md">Connecting...</span>
+                    <button onclick="resetName()" class="text-[10px] text-slate-400 underline font-bold ios-pop">Edit Name</button>
+                </div>
                 <div class="flex items-center space-x-2 mt-1">
                     <select id="region-selector" onchange="changeRegion(this.value)" class="bg-transparent font-black text-lg focus:outline-none cursor-pointer">
                         <option value="obx">🌊 Outer Banks (Verbatim)</option>
@@ -58,13 +61,13 @@
 
         <footer class="bg-white dark:bg-slate-800 p-3 rounded-2xl shadow-sm mt-2">
             <h3 class="text-xs font-black tracking-wider text-slate-400 mb-2 uppercase">Vehicle Standings</h3>
-            <div id="scoreboard" class="grid grid-cols-4 gap-2 text-center text-xs">
+            <div id="scoreboard" class="grid grid-cols-4 gap-2 text-center text-xs min-h-[40px]">
                 </div>
         </footer>
     </div>
 
-    <div id="confirm-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/60 p-6 backdrop-blur-xs">
-        <div class="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-sm w-full text-center space-y-4">
+    <div id="confirm-modal" class="fixed inset-0 z-50 items-center justify-center bg-black/70 p-6 backdrop-blur-sm" style="display: none;">
+        <div class="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl border border-slate-700">
             <h3 class="text-xl font-black text-red-500">Reset Current Round?</h3>
             <p class="text-sm text-slate-500 dark:text-slate-400">This will completely clear and wipe the board layouts for everyone logged into this room code.</p>
             <div class="flex space-x-3">
@@ -75,7 +78,7 @@
     </div>
 
     <script>
-        // --- DATA DICTIONARIES (REGIONAL POOLS) ---
+        // --- DATA DICTIONARIES ---
         const MASTER_POOLS = {
             obx: ["FLAG", "POOL", "SURFBOARD", "FISHING PIER", "POLICE CAR", "ADIRONDACK CHAIR", "WINGED HORSE", "GOLF CART", "WATER TOWER", "STOP SIGN", "FLIP FLOPS", "BIKE", "OBX LICENSE PLATE", "RESTAURANT", "BIPLANE", "MILEPOST", "OCEAN", "FIRE TRUCK", "BRIDGE", "BOAT", "UMBRELLA", "WRIGHT MEMORIAL", "KITE", "SEASHELL", "LIGHTHOUSE", "JOCKEY'S RIDGE", "WILD HORSE SIGN", "ICE CREAM SHOP", "SEAGULL", "JEEP", "SOUVENIR SHOP", "DUNE BUGGY", "PIER BILLBOARD", "SHELL GAS STATION"],
             chesapeake: ["TUNNEL ENTRANCE", "CRAB SHACK", "NAVY SHIP", "PELICAN", "LIGHTHOUSE", "SEAGULL", "TRACTOR", "WAWA LOGO", "WELCOME TO MD SIGN", "WATERMELON STAND", "BOAT ON TRAILER", "FISHING NETS", "CHINCOTEAGUE PONY", "POCOMINTO SIGN", "CHICKEN FARM", "DELAWARE PLATE", "BAY BRIDGE TOLL", "SAILBOAT", "MARINA", "DEER CROSSING", "CONSTRUCTION ZONE", "HISTORIC MARKER", "PALM TREE EMBLEM", "CRAB POT STACK"],
@@ -92,82 +95,102 @@
         let localBoard = [];
         let markedSquares = [];
         let lastTapTime = 0;
+        let isOnline = false;
 
-        // --- FIREBASE INITIALIZATION WITH ERROR HANDLING ---
+        // --- FIREBASE INITIALIZATION ---
         const firebaseConfig = { databaseURL: "https://obx-bingo-default-rtdb.firebaseio.com/" };
-        
         try {
             firebase.initializeApp(firebaseConfig);
             db = firebase.database();
+            isOnline = true;
         } catch(e) {
-            console.warn("Firebase connection blocked by browser settings or extension.");
+            console.warn("Offline Mode Active.");
         }
 
-        // CHECK URL FOR ROOM ENFORCEMENT
+        // --- URL & THEME SETUP ---
         const urlParams = new URLSearchParams(window.location.search);
-        if(urlParams.get('room')) {
-            document.getElementById('room-input').value = urlParams.get('room').toUpperCase();
-        }
-
-        // --- AUTO DARK MODE ---
+        if(urlParams.get('room')) document.getElementById('room-input').value = urlParams.get('room').toUpperCase();
+        
         if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
             document.documentElement.classList.add('dark');
+        }
+
+        // --- CORE FUNCTIONS ---
+        function resetName() {
+            localStorage.removeItem('obx_name');
+            location.reload();
         }
 
         function joinGame() {
             const roomVal = document.getElementById('room-input').value.trim().toUpperCase();
             const nameVal = document.getElementById('name-input').value.trim();
-            
-            if(!roomVal || !nameVal) return alert("Please specify both a Room Code and Name!");
-            
-            // V2 DIAGNOSTIC CHECK
-            if(!db) return alert("Connection Blocked 🛑\n\nPlease pause your VPN, uBlock, or tracking protection for this site and refresh the page to connect.");
+            if(!roomVal || !nameVal) return alert("Please enter both Room and Name!");
             
             currentRoom = roomVal;
             currentPlayer = nameVal;
             
-            roomRef = db.ref('rooms/' + currentRoom);
-            playerRef = roomRef.child('players/' + currentPlayer);
-
             document.getElementById('player-tag').innerText = `${currentPlayer} @ ${currentRoom}`;
-            document.getElementById('setup-screen').classList.add('hidden');
+            document.getElementById('setup-screen').style.display = 'none';
 
             localStorage.setItem('obx_room', currentRoom);
             localStorage.setItem('obx_name', currentPlayer);
 
-            initializeNetworkListeners();
+            // OFFLINE-FIRST: Instantly load saved board or generate a new one
+            const savedBoard = localStorage.getItem('obx_board');
+            const savedMarks = localStorage.getItem('obx_marks');
+            const savedRegion = localStorage.getItem('obx_region');
+            
+            if(savedBoard && savedMarks) {
+                localBoard = JSON.parse(savedBoard);
+                markedSquares = JSON.parse(savedMarks);
+                if(savedRegion) {
+                    currentRegion = savedRegion;
+                    document.getElementById('region-selector').value = currentRegion;
+                }
+                renderGrid();
+            } else {
+                generateFreshLocalBoard();
+            }
+
+            // Connect to Cloud if available
+            if(isOnline) initializeNetworkListeners();
         }
 
         function initializeNetworkListeners() {
+            roomRef = db.ref('rooms/' + currentRoom);
+            playerRef = roomRef.child('players/' + currentPlayer);
+
+            // Announce presence
+            playerRef.update({ score: markedSquares.filter(Boolean).length - 1 });
+
+            // Listen for Global Resets
             roomRef.child('meta').on('value', snapshot => {
                 const data = snapshot.val();
                 if(data) {
                     if(data.currentRegion !== currentRegion) {
                         currentRegion = data.currentRegion;
                         document.getElementById('region-selector').value = currentRegion;
+                        localStorage.setItem('obx_region', currentRegion);
                     }
-                    if(data.resetTimestamp !== localStorage.getItem('lastReset')) {
-                        localStorage.setItem('lastReset', data.resetTimestamp);
+                    if(data.resetTimestamp && data.resetTimestamp.toString() !== localStorage.getItem('lastReset')) {
+                        localStorage.setItem('lastReset', data.resetTimestamp.toString());
                         generateFreshLocalBoard();
                     }
-                } else {
-                    roomRef.child('meta').set({ currentRegion: 'obx', resetTimestamp: Date.now() });
                 }
             });
 
+            // Listen for Trash Talk
             roomRef.child('ticker').on('value', snapshot => {
                 const logs = snapshot.val() || [];
                 const tickerEl = document.getElementById('ticker-content');
-                if(logs.length > 0) {
-                    tickerEl.innerHTML = logs.slice(-3).reverse().join(' &nbsp;|&nbsp; ');
-                }
+                if(logs.length > 0) tickerEl.innerHTML = logs.slice(-3).reverse().join(' &nbsp;|&nbsp; ');
             });
 
+            // Sync Scoreboard
             roomRef.child('players').on('value', snapshot => {
                 const players = snapshot.val() || {};
                 const scoreboard = document.getElementById('scoreboard');
                 scoreboard.innerHTML = '';
-                
                 Object.keys(players).forEach(p => {
                     const hasBingo = players[p].bingo ? '🏆 BINGO' : `${players[p].score || 0} pts`;
                     scoreboard.innerHTML += `
@@ -191,7 +214,12 @@
             markedSquares = Array(25).fill(false);
             markedSquares[12] = true; 
 
-            playerRef.set({ score: 0, bingo: false });
+            // Save to memory
+            localStorage.setItem('obx_board', JSON.stringify(localBoard));
+            localStorage.setItem('obx_marks', JSON.stringify(markedSquares));
+            localStorage.setItem('obx_region', currentRegion);
+
+            if(isOnline && playerRef) playerRef.set({ score: 0, bingo: false });
             renderGrid();
         }
 
@@ -199,8 +227,11 @@
             const gridEl = document.getElementById('bingo-grid');
             gridEl.innerHTML = '';
 
-            roomRef.child('unique_claims').get().then(snapshot => {
-                const claims = snapshot.val() || {};
+            // Handle Unique Claims safely
+            let claimsPromise = isOnline && roomRef ? roomRef.child('unique_claims').get() : Promise.resolve({ val: () => ({}) });
+            
+            claimsPromise.then(snapshot => {
+                const claims = (snapshot.val && snapshot.val()) || {};
 
                 localBoard.forEach((item, index) => {
                     const isMarked = markedSquares[index];
@@ -208,18 +239,18 @@
                     const claimedBySomeoneElse = isUnique && claims[item] && claims[item] !== currentPlayer;
 
                     let bgClass = "bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200";
-                    if (isMarked) bgClass = "bg-orange-500 text-white font-black shadow-inner";
-                    if (item === "FREE") bgClass = "bg-blue-600 text-white font-black";
+                    if (isMarked) bgClass = "bg-orange-500 text-white font-black shadow-inner border-orange-600";
+                    if (item === "FREE") bgClass = "bg-blue-600 text-white font-black border-blue-700";
                     if (claimedBySomeoneElse) bgClass = "bg-slate-300 dark:bg-slate-700 text-slate-400 dark:text-slate-500 line-through opacity-40 pointer-events-none";
 
                     gridEl.innerHTML += `
                         <button 
                             id="tile-${index}"
                             onclick="handleTileTap(${index}, '${item}')"
-                            class="bingo-tile ios-pop ${bgClass} rounded-xl p-1 flex flex-col items-center justify-center text-center shadow-xs border border-black/5 dark:border-white/5 overflow-hidden break-words">
-                            <span class="text-[9px] sm:text-xs leading-none font-bold tracking-tight uppercase">${item}</span>
-                            ${isUnique && !isMarked && !claimedBySomeoneElse ? '<span class="text-[7px] text-orange-500 mt-0.5 font-black">⭐ UNIQUE</span>' : ''}
-                            ${isUnique && isMarked ? '<span class="text-[7px] text-orange-200 mt-0.5 font-black">CLAIMED</span>' : ''}
+                            class="bingo-tile ios-pop ${bgClass} rounded-xl p-1 flex flex-col items-center justify-center text-center shadow-sm border border-black/10 dark:border-white/5 overflow-hidden break-words min-h-[60px]">
+                            <span class="text-[9px] sm:text-xs leading-tight font-bold tracking-tight uppercase">${item}</span>
+                            ${isUnique && !isMarked && !claimedBySomeoneElse ? '<span class="text-[7px] text-orange-500 mt-1 font-black">⭐ UNIQUE</span>' : ''}
+                            ${isUnique && isMarked ? '<span class="text-[7px] text-orange-200 mt-1 font-black">CLAIMED</span>' : ''}
                         </button>`;
                 });
             });
@@ -229,18 +260,16 @@
             if(item === "FREE") return;
 
             const currentTime = new Date().getTime();
-            const tapLength = currentTime - lastTapTime;
+            if (currentTime - lastTapTime > 300) return; // Enforce Double-Tap
             lastTapTime = currentTime;
-
-            if (tapLength > 300) return; 
 
             if (navigator.vibrate) navigator.vibrate(40);
 
-            if (UNIQUE_TARGETS.includes(item) && !markedSquares[index]) {
+            if (isOnline && UNIQUE_TARGETS.includes(item) && !markedSquares[index]) {
                 roomRef.child('unique_claims/' + item).transaction(currentOwner => {
                     if (currentOwner === null) {
                         executeMark(index, item);
-                        pushTickerMessage(`⭐ ${currentPlayer} uniquely claimed [${item}]!`);
+                        pushTickerMessage(`⭐ ${currentPlayer} claimed [${item}]!`);
                         return currentPlayer;
                     } else {
                         alert(`Too slow! ${currentOwner} already claimed ${item}!`);
@@ -255,21 +284,19 @@
 
         function executeMark(index, item) {
             markedSquares[index] = !markedSquares[index];
+            localStorage.setItem('obx_marks', JSON.stringify(markedSquares)); // Save progress instantly
             
             const totalScore = markedSquares.filter(Boolean).length - 1; 
             const isBingo = checkBingoMatrix();
 
-            playerRef.update({ score: totalScore, bingo: isBingo });
+            if(isOnline && playerRef) playerRef.update({ score: totalScore, bingo: isBingo });
 
-            if(markedSquares[index]) {
-                pushTickerMessage(`${currentPlayer} marked [${item}]`);
-            }
+            if(markedSquares[index] && isOnline) pushTickerMessage(`${currentPlayer} marked [${item}]`);
 
             if (isBingo) {
                 confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } });
-                pushTickerMessage(`🎉 ${currentPlayer} HIT BINGO! 🎉`);
+                if(isOnline) pushTickerMessage(`🎉 ${currentPlayer} HIT BINGO! 🎉`);
             }
-
             renderGrid();
         }
 
@@ -284,6 +311,7 @@
         }
 
         function pushTickerMessage(msg) {
+            if(!isOnline) return;
             roomRef.child('ticker').get().then(snapshot => {
                 let currentLogs = snapshot.val() || [];
                 currentLogs.push(`[${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}] ${msg}`);
@@ -292,26 +320,37 @@
             });
         }
 
+        // --- RESET AND REGION CONTROLS ---
         function changeRegion(val) {
             currentRegion = val;
-            roomRef.child('meta').update({ currentRegion: val });
-            pushTickerMessage(`🗺️ Route switched to: ${val.toUpperCase()}`);
+            localStorage.setItem('obx_region', currentRegion);
+            if(isOnline) {
+                roomRef.child('meta').update({ currentRegion: val });
+                pushTickerMessage(`🗺️ Route switched to: ${val.toUpperCase()}`);
+            }
             executeGlobalReset();
         }
 
         function triggerResetFlow() {
-            document.getElementById('confirm-modal').classList.remove('hidden');
+            document.getElementById('confirm-modal').style.display = 'flex';
         }
+        
         function closeResetFlow() {
-            document.getElementById('confirm-modal').classList.add('hidden');
+            document.getElementById('confirm-modal').style.display = 'none';
         }
+        
         function executeGlobalReset() {
-            document.getElementById('confirm-modal').classList.add('hidden');
-            roomRef.child('unique_claims').set(null);
-            roomRef.child('meta').update({ resetTimestamp: Date.now() });
-            pushTickerMessage(`🔄 A fresh round has been initialized!`);
+            document.getElementById('confirm-modal').style.display = 'none';
+            if(isOnline) {
+                roomRef.child('unique_claims').set(null);
+                roomRef.child('meta').update({ resetTimestamp: Date.now() });
+                pushTickerMessage(`🔄 A fresh round has been initialized!`);
+            } else {
+                generateFreshLocalBoard(); // Force local reset if offline
+            }
         }
 
+        // --- STARTUP LOGIC ---
         window.onload = function() {
             const cachedRoom = localStorage.getItem('obx_room');
             const cachedName = localStorage.getItem('obx_name');
