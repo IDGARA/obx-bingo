@@ -260,8 +260,10 @@
             if(item === "FREE") return;
 
             const currentTime = new Date().getTime();
-            if (currentTime - lastTapTime > 300) return; // Enforce Double-Tap
+            const tapLength = currentTime - lastTapTime;
             lastTapTime = currentTime;
+
+            if (tapLength > 300) return; // Wait for the second tap to execute
 
             if (navigator.vibrate) navigator.vibrate(40);
 
@@ -369,4 +371,4 @@
         }
     </style>
 </body>
-</html>
+</html> 
