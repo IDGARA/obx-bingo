@@ -135,7 +135,6 @@
             localStorage.setItem('obx_room', currentRoom);
             localStorage.setItem('obx_name', currentPlayer);
 
-            // OFFLINE-FIRST: Instantly load saved board or generate a new one
             const savedBoard = localStorage.getItem('obx_board');
             const savedMarks = localStorage.getItem('obx_marks');
             const savedRegion = localStorage.getItem('obx_region');
@@ -152,7 +151,6 @@
                 generateFreshLocalBoard();
             }
 
-            // Connect to Cloud if available
             if(isOnline) initializeNetworkListeners();
         }
 
@@ -160,10 +158,8 @@
             roomRef = db.ref('rooms/' + currentRoom);
             playerRef = roomRef.child('players/' + currentPlayer);
 
-            // Announce presence
             playerRef.update({ score: markedSquares.filter(Boolean).length - 1 });
 
-            // Listen for Global Resets
             roomRef.child('meta').on('value', snapshot => {
                 const data = snapshot.val();
                 if(data) {
@@ -179,14 +175,12 @@
                 }
             });
 
-            // Listen for Trash Talk
             roomRef.child('ticker').on('value', snapshot => {
                 const logs = snapshot.val() || [];
                 const tickerEl = document.getElementById('ticker-content');
                 if(logs.length > 0) tickerEl.innerHTML = logs.slice(-3).reverse().join(' &nbsp;|&nbsp; ');
             });
 
-            // Sync Scoreboard
             roomRef.child('players').on('value', snapshot => {
                 const players = snapshot.val() || {};
                 const scoreboard = document.getElementById('scoreboard');
@@ -199,6 +193,10 @@
                             <div class="font-mono mt-0.5 text-orange-500 font-bold">${hasBingo}</div>
                         </div>`;
                 });
+            });
+            
+            roomRef.child('unique_claims').on('value', () => {
+                renderGrid();
             });
         }
 
@@ -214,7 +212,6 @@
             markedSquares = Array(25).fill(false);
             markedSquares[12] = true; 
 
-            // Save to memory
             localStorage.setItem('obx_board', JSON.stringify(localBoard));
             localStorage.setItem('obx_marks', JSON.stringify(markedSquares));
             localStorage.setItem('obx_region', currentRegion);
@@ -227,7 +224,6 @@
             const gridEl = document.getElementById('bingo-grid');
             gridEl.innerHTML = '';
 
-            // Handle Unique Claims safely
             let claimsPromise = isOnline && roomRef ? roomRef.child('unique_claims').get() : Promise.resolve({ val: () => ({}) });
             
             claimsPromise.then(snapshot => {
@@ -263,37 +259,57 @@
             const tapLength = currentTime - lastTapTime;
             lastTapTime = currentTime;
 
-            if (tapLength > 300) return; // Wait for the second tap to execute
+            if (tapLength > 300) return; 
 
             if (navigator.vibrate) navigator.vibrate(40);
 
-            if (isOnline && UNIQUE_TARGETS.includes(item) && !markedSquares[index]) {
+            const isUnique = UNIQUE_TARGETS.includes(item);
+            const wasAlreadyMarked = markedSquares[index];
+
+            // V5 OPTIMISTIC UI FIX: Execute local mark instantly, regardless of network status.
+            executeMark(index, item);
+
+            // Cloud Validation Background Check (Only process if online and attempting to claim a unique target)
+            if (isOnline && isUnique && !wasAlreadyMarked) {
                 roomRef.child('unique_claims/' + item).transaction(currentOwner => {
-                    if (currentOwner === null) {
-                        executeMark(index, item);
-                        pushTickerMessage(`⭐ ${currentPlayer} claimed [${item}]!`);
-                        return currentPlayer;
+                    if (currentOwner === null || currentOwner === currentPlayer) {
+                        return currentPlayer; 
                     } else {
-                        alert(`Too slow! ${currentOwner} already claimed ${item}!`);
-                        renderGrid();
-                        return;
+                        return; // Cancel transaction if someone else owns it
+                    }
+                }, (error, committed, snapshot) => {
+                    if (!committed && !error) {
+                        // Rollback state if the user lost the race condition
+                        const winner = snapshot.val();
+                        if (winner !== currentPlayer) {
+                            alert(`Too slow! ${winner} already claimed ${item}!`);
+                            executeMark(index, item); // Reverts the toggle locally
+                        }
+                    } else if (committed) {
+                        pushTickerMessage(`⭐ ${currentPlayer} claimed [${item}]!`);
                     }
                 });
-            } else {
-                executeMark(index, item);
+            } else if (isOnline && isUnique && wasAlreadyMarked) {
+                // Instantly release claim in cloud if un-toggling a unique item
+                roomRef.child('unique_claims/' + item).transaction(currentOwner => {
+                    if (currentOwner === currentPlayer) return null;
+                    return;
+                });
             }
         }
 
         function executeMark(index, item) {
             markedSquares[index] = !markedSquares[index];
-            localStorage.setItem('obx_marks', JSON.stringify(markedSquares)); // Save progress instantly
+            localStorage.setItem('obx_marks', JSON.stringify(markedSquares)); 
             
             const totalScore = markedSquares.filter(Boolean).length - 1; 
             const isBingo = checkBingoMatrix();
 
             if(isOnline && playerRef) playerRef.update({ score: totalScore, bingo: isBingo });
 
-            if(markedSquares[index] && isOnline) pushTickerMessage(`${currentPlayer} marked [${item}]`);
+            if(markedSquares[index] && isOnline && !UNIQUE_TARGETS.includes(item)) {
+                pushTickerMessage(`${currentPlayer} marked [${item}]`);
+            }
 
             if (isBingo) {
                 confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } });
@@ -322,7 +338,6 @@
             });
         }
 
-        // --- RESET AND REGION CONTROLS ---
         function changeRegion(val) {
             currentRegion = val;
             localStorage.setItem('obx_region', currentRegion);
@@ -348,11 +363,10 @@
                 roomRef.child('meta').update({ resetTimestamp: Date.now() });
                 pushTickerMessage(`🔄 A fresh round has been initialized!`);
             } else {
-                generateFreshLocalBoard(); // Force local reset if offline
+                generateFreshLocalBoard();
             }
         }
 
-        // --- STARTUP LOGIC ---
         window.onload = function() {
             const cachedRoom = localStorage.getItem('obx_room');
             const cachedName = localStorage.getItem('obx_name');
@@ -363,12 +377,5 @@
             }
         }
     </script>
-
-    <style>
-        @keyframes marquee {
-            0% { transform: translate3d(0, 0, 0); }
-            100% { transform: translate3d(-100%, 0, 0); }
-        }
-    </style>
 </body>
 </html> 
